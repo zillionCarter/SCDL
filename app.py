@@ -350,4 +350,14 @@ def download_result(req_id):
 
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    import sys
+    # Check if running on Render or in production
+    is_production = os.environ.get('RENDER') == 'true' or os.environ.get('FLASK_ENV') == 'production'
+    port = int(os.environ.get('PORT', 5000))
+    
+    if is_production:
+        # Production mode: bind to 0.0.0.0, disable debug
+        app.run(host='0.0.0.0', port=port, debug=False)
+    else:
+        # Development mode: localhost with debug
+        app.run(host='127.0.0.1', port=port, debug=True)
