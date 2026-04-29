@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>SC Downloader | Alexander Roper</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background: #050505; color: #e5e5e7; }
+        .glass { background: rgba(15, 15, 18, 0.9); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.05); }
+        .accent { color: #ff5500; }
+        .bg-accent { background: #ff5500; }
+        .track-card { border-left: 3px solid transparent; transition: 0.2s; }
+        .track-card:hover { border-left-color: #ff5500; background: rgba(255,85,0,0.05); }
+    </style>
+</head>
+<body class="min-h-screen font-sans">
+
+    <header class="glass sticky top-0 z-50 px-8 py-4 flex justify-between items-center">
+        <h1 class="text-xl font-black uppercase italic tracking-tighter">SC<span class="accent">DL</span> <span class="text-zinc-700 ml-2 text-xs font-bold uppercase tracking-widest">Industrial Console</span></h1>
+        <div class="flex items-center gap-6">
+            <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Alexander Roper</span>
+            <a href="https://www.buymeacoffee.com/ZillionCart" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" style="height: 34px;"></a>
+        </div>
+    </header>
+
+    <main class="max-w-4xl mx-auto py-12 px-6">
+        <div class="glass p-8 rounded-3xl mb-10">
+            <div class="flex gap-4">
+                <input type="text" id="urlInput" placeholder="Paste SoundCloud URL..." class="flex-1 bg-zinc-900 border border-zinc-800 p-4 rounded-2xl focus:outline-none focus:border-orange-600">
+                <button onclick="fetchData()" class="bg-accent px-10 rounded-2xl font-black uppercase text-white hover:bg-orange-600 transition-all">Analyze</button>
+            </div>
+        </div>
+
+        <div id="fetchProgress" class="hidden glass p-6 rounded-3xl mb-6">
+            <div class="flex justify-between items-center mb-3">
+                <span class="font-black uppercase text-xs">Fetching Metadata</span>
+                <span id="fetchStatusText" class="text-zinc-400 text-xs">Waiting...</span>
+            </div>
+            <div class="h-3 bg-zinc-800 rounded-full overflow-hidden mb-3">
+                <div id="fetchProgressBar" class="h-full bg-accent w-0 transition-all duration-300"></div>
+            </div>
+            <p id="fetchStatusDetail" class="text-zinc-500 text-xs">Fetching playlist data. This may take up to 2 minutes for large playlists.</p>
+        </div>
+
+        <div id="downloadProgress" class="hidden glass p-6 rounded-3xl mb-6">
+            <div class="flex justify-between items-center mb-3">
+                <span class="font-black uppercase text-xs">Download Progress</span>
+                <span id="downloadStatusText" class="text-zinc-400 text-xs">Queued</span>
+            </div>
+            <div class="h-3 bg-zinc-800 rounded-full overflow-hidden mb-3">
+                <div id="downloadProgressBar" class="h-full bg-accent w-0 transition-all duration-300"></div>
+            </div>
+            <div class="space-y-2 text-zinc-500 text-xs">
+                <p id="downloadTrackLabel">Track 0 / 0</p>
+                <p id="downloadTrackName" class="truncate">Waiting to start...</p>
+                <p id="downloadETA">ETA: --</p>
+            </div>
+        </div>
+
+        <div id="playlistInfo" class="hidden mb-10 flex gap-6 items-end">
+            <img id="pCover" src="" class="w-40 h-40 rounded-2xl shadow-2xl object-cover border-2 border-zinc-800">
+            <div class="flex-1">
+                <h2 id="pTitle" class="text-4xl font-black text-white mb-2"></h2>
+                <p id="pMeta" class="text-zinc-500 font-bold uppercase text-xs tracking-widest mb-4"></p>
+                <button onclick="downloadZip()" id="zipBtn" class="bg-white text-black px-8 py-3 rounded-xl font-black text-xs uppercase hover:bg-zinc-200">Download All ZIP</button>
+            </div>
+        </div>
+
+        <div id="trackList" class="space-y-2"></div>
+    </main>
+
+    <script>
+        let tracks = [];
+        let playlistName = "";
+        let downloadPoll = null;
+
+        function showFetchProgress(show) {
+            document.getElementById('fetchProgress').classList.toggle('hidden', !show);
+        }
+
+        function setFetchProgress(text, percent, detail) {
+            document.getElementById('fetchStatusText').innerText = text;
+            document.getElementById('fetchProgressBar').style.width = `${percent}%`;
+            document.getElementById('fetchStatusDetail').innerText = detail || '';
+        }
+
+        function showDownloadProgress(show) {
+            document.getElementById('downloadProgress').classList.toggle('hidden', !show);
+        }
+
+        function setDownloadProgress(text, percent, trackLabel, trackName, eta) {
+            document.getElementById('downloadStatusText').innerText = text;
+            document.getElementById('downloadProgressBar').style.width = `${percent}%`;
+            document.getElementById('downloadTrackLabel').innerText = trackLabel || '';
+            document.getElementById('downloadTrackName').innerText = trackName || '';
+            document.getElementById('downloadETA').innerText = eta ? `ETA: ${eta}` : '';
+        }
+
+        async function fetchData() {
+            let url = document.getElementById('urlInput').value.trim();
+            if(!url) return;
+            if(!/^https?:\/\//i.test(url)) {
+                url = 'https://' + url;
+            }
+            const profileMatch = url.match(/^https?:\/\/(?:www\.)?soundcloud\.com\/[^\/]+\/?$/i);
+            if(profileMatch) {
+                url = url.replace(/\/?$/, '/tracks');
+            }
+
+            document.getElementById('playlistInfo').classList.add('hidden');
+            document.getElementById('trackList').innerHTML = '';
+            showFetchProgress(true);
+            setFetchProgress('Resolving URL', 10, 'Preparing the SoundCloud request');
+
+            try {
+                setFetchProgress('Fetching metadata', 30, 'Contacting backend service (may take up to 2 minutes)');
+                const res = await fetch('/api/fetch', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({url})
+                });
+
+                setFetchProgress('Parsing response', 60, 'Waiting for metadata from SoundCloud');
+                const data = await res.json();
+                if(!res.ok) throw new Error(data.error || 'Failed to fetch track data');
+                if(data.error) throw new Error(data.error);
+
+                tracks = data.entries;
+                playlistName = data.title;
+
+                document.getElementById('pTitle').innerText = data.title;
+                document.getElementById('pCover').src = data.thumbnail || 'https://via.placeholder.com/200?text=SC';
+                document.getElementById('pMeta').innerText = `${data.entries.length} Tracks Ready for Export`;
+
+                data.entries.forEach((t, i) => {
+                    const row = document.createElement('div');
+                    row.className = "track-card glass p-4 rounded-xl flex items-center gap-4";
+                    row.innerHTML = `
+                        <span class="w-6 text-zinc-700 font-black text-center">${i+1}</span>
+                        <img src="${t.thumbnail || 'https://via.placeholder.com/50'}" class="w-12 h-12 rounded-lg object-cover">
+                        <div class="flex-1 truncate">
+                            <p class="font-bold text-white truncate">${t.title}</p>
+                            <p class="text-zinc-600 text-[10px] font-black uppercase">${t.uploader}</p>
+                        </div>
+                    `;
+                    document.getElementById('trackList').appendChild(row);
+                });
+
+                document.getElementById('playlistInfo').classList.remove('hidden');
+                setFetchProgress('Complete', 100, `${data.entries.length} tracks loaded`);
+            } catch(e) {
+                alert(e.message);
+                setFetchProgress('Failed', 0, e.message);
+            } finally {
+                setTimeout(() => showFetchProgress(false), 400);
+            }
+        }
+
+        async function downloadFile(url, fileName) {
+            const res = await fetch(url);
+            if(!res.ok) {
+                const errorData = await res.json().catch(() => ({}));
+                throw new Error(errorData.error || 'Download failed');
+            }
+            const blob = await res.blob();
+            const dUrl = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = dUrl;
+            a.download = `${fileName}.zip`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(dUrl);
+        }
+
+        async function downloadZip() {
+            const btn = document.getElementById('zipBtn');
+            btn.innerText = "Preparing ZIP...";
+            btn.disabled = true;
+            showDownloadProgress(true);
+            setDownloadProgress('Queued', 5, `0 / ${tracks.length}`, 'Preparing download...', '--');
+
+            try {
+                const res = await fetch('/api/download-zip', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({tracks, name: playlistName})
+                });
+
+                const payload = await res.json();
+                if(!res.ok) throw new Error(payload.error || 'Zip creation failed');
+
+                const statusUrl = payload.status_url;
+                const downloadUrl = payload.download_url;
+
+                if(downloadPoll) {
+                    clearInterval(downloadPoll);
+                }
+
+                downloadPoll = setInterval(async () => {
+                    try {
+                        const statusRes = await fetch(statusUrl);
+                        const status = await statusRes.json();
+                        if(status.error) {
+                            throw new Error(status.error);
+                        }
+
+                        setDownloadProgress(status.message || status.stage || 'Downloading', status.percent || 0,
+                            `${status.completed || 0} / ${status.total || tracks.length}`,
+                            status.current_track_title || 'Waiting...',
+                            status.eta_text || '--');
+
+                        if(status.download_ready) {
+                            clearInterval(downloadPoll);
+                            setDownloadProgress('Finalizing', 100, `${status.total} / ${status.total}`, 'Creating ZIP file', '0s');
+                            await downloadFile(downloadUrl, playlistName);
+                            setDownloadProgress('Complete', 100, `${status.total} / ${status.total}`, 'Download ready', '0s');
+                        }
+
+                        if(status.stage === 'error' || status.error) {
+                            clearInterval(downloadPoll);
+                            throw new Error(status.error || status.message || 'Download failed');
+                        }
+                    } catch(e) {
+                        clearInterval(downloadPoll);
+                        alert(e.message);
+                        btn.innerText = "Download All ZIP";
+                        btn.disabled = false;
+                        showDownloadProgress(false);
+                    }
+                }, 900);
+            } catch(e) {
+                alert(e.message);
+                btn.innerText = "Download All ZIP";
+                btn.disabled = false;
+                showDownloadProgress(false);
+            }
+        }
+    </script>
+</body>
+</html>
