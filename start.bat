@@ -1,0 +1,9 @@
+@echo off
+echo Starting SoundCloud Downloader...
+echo.
+echo Installing dependencies if needed...
+pip install -r requirements.txt
+echo.
+echo Starting Flask server...
+python app.py
+pause

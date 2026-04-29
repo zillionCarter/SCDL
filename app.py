@@ -7,8 +7,10 @@ import time
 import uuid
 import zipfile
 from urllib.parse import urlparse, urlunparse
+from flask_cors import CORS
 
 app = Flask(__name__, template_folder='.', static_folder='.')
+CORS(app)
 
 # Create a permanent downloads directory
 DL_PATH = os.path.abspath("downloads")
