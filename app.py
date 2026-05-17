@@ -8,6 +8,7 @@ import uuid
 import zipfile
 from urllib.parse import urlparse, urlunparse
 from flask_cors import CORS
+from werkzeug.exceptions import HTTPException
 
 app = Flask(__name__, template_folder='.', static_folder='.')
 CORS(app)
@@ -245,16 +246,17 @@ def download_zip():
         os.makedirs(temp_dir, exist_ok=True)
         ydl_opts = {
             'format': 'bestaudio/best',
-            'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
             'restrictfilenames': True,
             'quiet': True,
             'no_warnings': True,
             'ignoreerrors': True,
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }] if shutil.which('ffmpeg') else [],
+            'noplaylist': True,
+            'continuedl': True,
+            'retries': 3,
+            # request thumbnails and metadata so we can embed cover art
+            'writethumbnail': True,
+            'addmetadata': True,
+            # don't set a global outtmpl here — we'll set a per-track outtmpl to include index
         }
 
         try:
@@ -269,8 +271,30 @@ def download_zip():
                                     completed=index - 1,
                                     percent=max(5, int((index - 1) / total * 80)))
 
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([track_url])
+                per_track_opts = dict(ydl_opts)
+                safe_index = f"{index:03d}"
+                per_track_opts['outtmpl'] = os.path.join(temp_dir, f"{safe_index} - %(title)s.%(ext)s")
+
+                # If ffmpeg is available, extract to high-quality MP3 and embed thumbnail/metadata
+                if shutil.which('ffmpeg'):
+                    per_track_opts['postprocessors'] = [
+                        {
+                            'key': 'FFmpegExtractAudio',
+                            'preferredcodec': 'mp3',
+                            'preferredquality': '320',
+                        },
+                        {'key': 'EmbedThumbnail'},
+                        {'key': 'FFmpegMetadata'},
+                    ]
+                else:
+                    # Try to at least embed metadata where possible and keep original audio
+                    per_track_opts['postprocessors'] = [{'key': 'FFmpegMetadata'}]
+
+                with yt_dlp.YoutubeDL(per_track_opts) as ydl:
+                    try:
+                        ydl.download([track_url])
+                    except Exception as e:
+                        app.logger.warning('Failed to download track %s: %s', track_url, e)
 
                 elapsed = time.time() - start_time
                 remaining = int((elapsed / index) * (total - index)) if index else None
@@ -347,6 +371,14 @@ def download_result(req_id):
         return response
 
     return send_file(file_path, as_attachment=True, download_name=f"{status.get('name', 'Playlist')}.zip")
+
+
+@app.errorhandler(Exception)
+def handle_all_exceptions(e):
+    app.logger.exception('Unhandled exception: %s', e)
+    if isinstance(e, HTTPException):
+        return jsonify({"error": e.description}), e.code
+    return jsonify({"error": str(e) or 'Internal server error'}), 500
 
 
 if __name__ == '__main__':
